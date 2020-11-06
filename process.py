@@ -1,11 +1,16 @@
 """Widgets for the monitoring of processes."""
 import os
 from collections import deque
+from dataclasses import dataclass
 
 import traitlets
 import ipywidgets as ipw
+from aiida.cmdline.utils.query.calculation import CalculationQueryBuilder
+from aiida.orm import load_node
 from aiida.orm import ProcessNode
+from aiida.orm.utils import load_node
 from widgets import ProcessOutputFollower
+
 
 
 def get_calc_job_output(process):
@@ -152,3 +157,75 @@ class ProcessStatusWidget(ipw.VBox):
 
     def update(self):
         self.progress_bar.update()
+
+
+class ProcessSelector(ipw.HBox):
+    _NO_PROCESS = object()
+
+    value = traitlets.Int(allow_none=True)
+
+    FMT_WORKCHAIN = "{wc.pk:6}{wc.ctime:>10}\t{wc.state:<16}\t{wc.formula}"
+
+    def __init__(self, **kwargs):
+        self.work_chains_selector = ipw.Dropdown(
+            description="Process",
+            options=[('New calculation...', self._NO_PROCESS)],
+            layout=ipw.Layout(width='auto', flex="1 1 auto"),
+        )
+        ipw.dlink((self.work_chains_selector, 'value'), (self, 'value'),
+                  transform=lambda pk: None if pk is self._NO_PROCESS else pk)
+
+        self.refresh_work_chains_button = ipw.Button(
+            description='Refresh')
+        self.refresh_work_chains_button.on_click(self.refresh_work_chains)
+        self.refresh_work_chains()
+        super().__init__(children=[self.work_chains_selector, self.refresh_work_chains_button], **kwargs)
+
+    @dataclass
+    class WorkChainData:
+        pk: int
+        ctime: str
+        state: str
+        formula: str
+
+    @classmethod
+    def find_work_chains(cls):
+        builder = CalculationQueryBuilder()
+        filters = builder.get_filters(
+            process_label = 'PwBandsWorkChain',
+        )
+        query_set = builder.get_query_set(
+            filters=filters,
+            order_by={'ctime': 'desc'},
+        )
+        projected = builder.get_projected(
+            query_set, projections=['pk', 'ctime', 'state'])
+
+        header = projected[0]
+        for process in projected[1:]:
+            pk = process[0]
+            try:
+                formula = load_node(pk).inputs.structure.get_formula()
+            except:
+                raise
+                formula = ''
+            yield cls.WorkChainData(formula=formula, *process)
+
+    def refresh_work_chains(self, _=None):
+        # This function may trigger the value to be reset, see issue:
+        # https://github.com/jupyter-widgets/ipywidgets/issues/2230
+        self.work_chains_selector.options = \
+            [("New calculation...", self._NO_PROCESS)] + \
+            [(self.FMT_WORKCHAIN.format(wc=wc), wc.pk) for wc in self.find_work_chains()]
+
+    @traitlets.observe('value')
+    def _observe_value(self, change):
+        if change['old'] == change['new']:
+            return
+
+        new = self._NO_PROCESS if change['new'] is None else change['new']
+
+        if new not in {pk for _, pk in self.work_chains_selector.options}:
+            self.refresh_work_chains()
+
+        self.work_chains_selector.value = new

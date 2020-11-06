@@ -48,7 +48,6 @@ def _get_output(calcjob):
 
 class LogOutputWidget(ipw.VBox):
 
-    value = traitlets.Unicode()
     value = traitlets.Tuple(traitlets.Unicode(), traitlets.Unicode())
 
     def __init__(self, num_min_lines=10, **kwargs):
@@ -150,16 +149,24 @@ class ProcessOutputFollower(ipw.VBox):
                 self._monitor_process_thread.join()
                 self._monitor_process_thread = None
 
-            if change['new']:
-                # Initial update of all widgets.
-                self._stop_monitor_process.clear()
-                self._update()
+            # Reset all widgets
+            self._stop_monitor_process.clear()
+            self._update_calcjobs(None)
+            self._update()
 
+            if change['new']:
                 self._monitor_process_thread = Thread(target=self._monitor_process, args=(change['new'], ))
                 self._monitor_process_thread.start()
 
     def _update_calcjobs(self, process):
         """Update the list of available calcjobs."""
+        if process is None:
+            with self.hold_trait_notifications():
+                self._calcjobs = dict()
+                self.selector.options = []
+                self.selector.value = None
+                return
+
         self._calcjobs = {cj.pk: cj for cj in _get_calcjobs(process)}
 
         with self.hold_trait_notifications():
@@ -191,7 +198,7 @@ class ProcessOutputFollower(ipw.VBox):
                 self._update_calcjobs(process)
                 self._start_push_threads()
 
-            if self.process.is_sealed:
+            if not self.process or self.process.is_sealed:
                 break
             else:
                 # Pull all new output and update widget.
@@ -201,7 +208,7 @@ class ProcessOutputFollower(ipw.VBox):
         # One final search, push, pull, and update.
         self._update_calcjobs(process)
         self._start_push_threads()
-        self._pull_output(timeout=5)
+        self._pull_output(timeout=1)
         self._update()
 
     def _push_output(self, calcjob, delay=.2):
@@ -253,7 +260,9 @@ class ProcessOutputFollower(ipw.VBox):
                 calcjob = self._calcjobs.get(pk)
                 restrict_num_lines = None
 
-            if calcjob is not None:
+            if calcjob is None:
+                self._log_output.value = '', ''
+            else:
                 filename = calcjob.attributes['output_filename']
                 lines = self._output[calcjob.pk][restrict_num_lines:]
                 self._log_output.value = filename, '\n'.join(lines)

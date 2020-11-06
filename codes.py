@@ -242,7 +242,9 @@ class CodeSubmitWidget(ipw.VBox, WizardAppStep):
                 display(output_viewer_widget)
 
     def _monitor_process(self):
-        assert self.process is not None
+        if self.process is None:
+            return
+
         process_node = load_node(self.process.id)
 
         while not process_node.is_sealed:
